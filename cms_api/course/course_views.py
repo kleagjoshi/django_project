@@ -6,6 +6,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
 from cms_api.models import Course
+from cms_api.permissions import IsAdminOrReadOnly, IsLecturerOrAdmin
 from cms_api.course.course_service import CourseService
 from cms_api.course.course_vm import (
     CourseCreateVM, CourseEditVM, CourseVM, CourseSimpleVM
@@ -16,7 +17,23 @@ from cms_api.serializers import CourseSerializer
 class CourseViewSet(viewsets.ModelViewSet):
     queryset = Course.objects.all()
     serializer_class = CourseSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAdminOrReadOnly]  # Read access for all, write access only for admin
+
+    def get_permissions(self):
+        """
+        Instantiates and returns the list of permissions that this view requires.
+        """
+        if self.action in ['list', 'retrieve', 'simple', 'by_lecturer']:
+            # Everyone can view courses
+            permission_classes = [IsAuthenticated]
+        elif self.action in ['passive', 'return_course']:
+            # Only lecturers and admin can view passive courses and return them
+            permission_classes = [IsLecturerOrAdmin]
+        else:
+            # Create, update, delete - admin only
+            permission_classes = [IsAdminOrReadOnly]
+        
+        return [permission() for permission in permission_classes]
 
     @extend_schema(
         request=CourseCreateVM,

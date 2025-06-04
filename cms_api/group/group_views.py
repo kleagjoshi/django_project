@@ -5,7 +5,8 @@ from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
-from cms_api.models import Group
+from cms_api.models import Group, Lecturer, Student
+from cms_api.permissions import IsLecturerOrAdmin, CanViewOwnData, IsOwnerLecturerOrAdmin
 from .group_service import GroupsService
 from .group_vm import (
     GroupCreateVM, GroupEditVM, GroupGetVM, GroupSimpleVM,
@@ -19,6 +20,52 @@ class GroupViewSet(viewsets.ModelViewSet):
     queryset = Group.objects.all()
     serializer_class = GroupSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        """
+        Instantiates and returns the list of permissions that this view requires.
+        """
+        if self.action == 'create':
+            # Only lecturers and admin can create groups
+            permission_classes = [IsLecturerOrAdmin]
+        elif self.action in ['update', 'partial_update', 'destroy', 'update_status']:
+            # Only the lecturer who owns the group or admin can modify
+            permission_classes = [IsOwnerLecturerOrAdmin]
+        elif self.action in ['list', 'retrieve', 'simple', 'by_status', 'course_lecturers', 'statistics']:
+            # Everyone can view general lists and statistics
+            permission_classes = [IsAuthenticated]
+        elif self.action in ['by_lecturer', 'by_student']:
+            # Users can view their own data
+            permission_classes = [CanViewOwnData]
+        else:
+            permission_classes = [IsAuthenticated]
+        
+        return [permission() for permission in permission_classes]
+
+    def get_queryset(self):
+        """
+        Filter queryset based on user role
+        """
+        if self.request.user.is_staff:
+            # Admin can see all groups
+            return Group.objects.all()
+        
+        try:
+            # Lecturer can see their own groups
+            lecturer = Lecturer.objects.get(user=self.request.user)
+            return Group.objects.filter(course_lecturer__lecturer=lecturer)
+        except Lecturer.DoesNotExist:
+            pass
+        
+        try:
+            # Students can see groups they're enrolled in
+            student = Student.objects.get(user=self.request.user)
+            return Group.objects.filter(group_students__student=student).distinct()
+        except Student.DoesNotExist:
+            pass
+        
+        # Default: empty queryset if user has no role
+        return Group.objects.none()
 
     @extend_schema(
         request=GroupCreateVM,

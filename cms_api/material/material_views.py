@@ -5,7 +5,8 @@ from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
-from cms_api.models import Material
+from cms_api.models import Material, Lecturer, Student
+from cms_api.permissions import IsOwnerLecturerOrAdmin, CanViewOwnData, IsLecturerOrAdmin
 from .material_service import MaterialsService
 from .material_vm import (
     MaterialVM, MaterialGetVM, MaterialCreateVM, MaterialUpdateVM
@@ -17,6 +18,53 @@ class MaterialViewSet(viewsets.ModelViewSet):
     queryset = Material.objects.all()
     serializer_class = MaterialSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        """
+        Instantiates and returns the list of permissions that this view requires.
+        """
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            # Only lecturers can manage materials for their groups
+            permission_classes = [IsOwnerLecturerOrAdmin]
+        elif self.action in ['list', 'retrieve', 'by_group', 'by_week', 'search']:
+            # Students can view materials for their groups, lecturers for their groups
+            permission_classes = [CanViewOwnData]
+        elif self.action in ['statistics']:
+            # Only lecturers and admin can view statistics
+            permission_classes = [IsLecturerOrAdmin]
+        else:
+            permission_classes = [IsAuthenticated]
+        
+        return [permission() for permission in permission_classes]
+
+    def get_queryset(self):
+        """
+        Filter queryset based on user role
+        """
+        if self.request.user.is_staff:
+            # Admin can see all materials
+            return Material.objects.all()
+        
+        try:
+            # Lecturer can see materials for their groups
+            lecturer = Lecturer.objects.get(user=self.request.user)
+            return Material.objects.filter(
+                group__course_lecturer__lecturer=lecturer
+            )
+        except Lecturer.DoesNotExist:
+            pass
+        
+        try:
+            # Students can see materials for groups they're enrolled in
+            student = Student.objects.get(user=self.request.user)
+            return Material.objects.filter(
+                group__group_students__student=student
+            ).distinct()
+        except Student.DoesNotExist:
+            pass
+        
+        # Default: empty queryset if user has no role
+        return Material.objects.none()
 
     @extend_schema(
         request=MaterialCreateVM,

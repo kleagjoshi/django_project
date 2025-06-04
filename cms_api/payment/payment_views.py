@@ -5,7 +5,8 @@ from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
-from cms_api.models import Payment
+from cms_api.models import Payment, Lecturer, Student
+from cms_api.permissions import CanManagePayments, IsOwnerStudentOrAdmin, IsLecturerOrAdmin
 from .payment_service import PaymentsService
 from .payment_vm import (
     PaymentVM, PaymentConfirmVM, StudentBlockVM, PaymentCreateVM,
@@ -18,7 +19,55 @@ from cms_api.enums import PaymentStatus
 class PaymentViewSet(viewsets.ModelViewSet):
     queryset = Payment.objects.all()
     serializer_class = PaymentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CanManagePayments]
+
+    def get_permissions(self):
+        """
+        Instantiates and returns the list of permissions that this view requires.
+        """
+        if self.action in ['get_payments']:
+            # Students can view their own payments, lecturers can view their group payments
+            permission_classes = [IsOwnerStudentOrAdmin]
+        elif self.action in ['confirm_payment', 'block_student', 'unblock_student']:
+            # Only lecturers and admin can manage payments and students
+            permission_classes = [IsLecturerOrAdmin]
+        elif self.action in ['list', 'retrieve', 'by_status', 'overdue', 'statistics']:
+            # Lecturers and admin can view payment reports
+            permission_classes = [IsLecturerOrAdmin]
+        elif self.action in ['update', 'partial_update', 'destroy']:
+            # Only admin can modify payment records directly
+            permission_classes = [IsLecturerOrAdmin]
+        else:
+            permission_classes = [CanManagePayments]
+        
+        return [permission() for permission in permission_classes]
+
+    def get_queryset(self):
+        """
+        Filter queryset based on user role
+        """
+        if self.request.user.is_staff:
+            # Admin can see all payments
+            return Payment.objects.all()
+        
+        try:
+            # Lecturer can see payments for their groups
+            lecturer = Lecturer.objects.get(user=self.request.user)
+            return Payment.objects.filter(
+                group_student__group__course_lecturer__lecturer=lecturer
+            )
+        except Lecturer.DoesNotExist:
+            pass
+        
+        try:
+            # Students can see their own payments
+            student = Student.objects.get(user=self.request.user)
+            return Payment.objects.filter(group_student__student=student)
+        except Student.DoesNotExist:
+            pass
+        
+        # Default: empty queryset if user has no role
+        return Payment.objects.none()
 
     @extend_schema(
         responses={200: PaymentVM(many=True)},

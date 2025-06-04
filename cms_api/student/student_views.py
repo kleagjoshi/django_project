@@ -5,7 +5,8 @@ from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
-from cms_api.models import Student
+from cms_api.models import Student, Lecturer
+from cms_api.permissions import IsLecturerOrAdmin, IsOwnerStudentOrAdmin, CanViewOwnData
 from .student_service import StudentService
 from .student_vm import (
     StudentCreateVM, StudentEditVM, StudentVM, StudentSimpleVM,
@@ -19,6 +20,57 @@ class StudentViewSet(viewsets.ModelViewSet):
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        """
+        Instantiates and returns the list of permissions that this view requires.
+        """
+        if self.action in ['create', 'destroy', 'return_student']:
+            # Only lecturers and admin can create/delete students
+            permission_classes = [IsLecturerOrAdmin]
+        elif self.action in ['update', 'partial_update']:
+            # Students can update their own data, lecturers/admin can update anyone
+            permission_classes = [IsOwnerStudentOrAdmin]
+        elif self.action in ['list', 'simple', 'passive', 'search', 'by_employment', 'all', 'statistics']:
+            # Lecturers and admin can view student lists
+            permission_classes = [IsLecturerOrAdmin]
+        elif self.action in ['retrieve']:
+            # Students can view their own data, others need lecturer/admin permissions
+            permission_classes = [CanViewOwnData]
+        elif self.action in ['update_status']:
+            # Only lecturers and admin can update student status in groups
+            permission_classes = [IsLecturerOrAdmin]
+        else:
+            permission_classes = [IsAuthenticated]
+        
+        return [permission() for permission in permission_classes]
+
+    def get_queryset(self):
+        """
+        Filter queryset based on user role
+        """
+        if self.request.user.is_staff:
+            # Admin can see all students
+            return Student.objects.all()
+        
+        try:
+            # Lecturer can see students in their groups
+            lecturer = Lecturer.objects.get(user=self.request.user)
+            return Student.objects.filter(
+                group_students__group__course_lecturer__lecturer=lecturer
+            ).distinct()
+        except Lecturer.DoesNotExist:
+            pass
+        
+        try:
+            # Students can see only themselves
+            student = Student.objects.get(user=self.request.user)
+            return Student.objects.filter(id=student.id)
+        except Student.DoesNotExist:
+            pass
+        
+        # Default: empty queryset if user has no role
+        return Student.objects.none()
 
     @extend_schema(
         request=StudentCreateVM,
