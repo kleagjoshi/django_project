@@ -296,7 +296,7 @@ class GroupStudentsService:
             group_id: The group ID
             
         Returns:
-            dict: Group capacity information
+            dict: Group capacity information (without capacity field since Group model doesn't have it)
         """
         try:
             group = Group.objects.get(id=group_id)
@@ -304,11 +304,8 @@ class GroupStudentsService:
 
             return {
                 'group_id': group_id,
-                'capacity': group.capacity,
                 'current_students': current_students,
-                'available_spots': group.capacity - current_students,
-                'is_full': current_students >= group.capacity,
-                'utilization_percentage': round((current_students / group.capacity) * 100, 2) if group.capacity > 0 else 0
+                'note': 'Group capacity information not available - Group model does not have capacity field'
             }
 
         except Group.DoesNotExist:
@@ -385,7 +382,7 @@ class GroupStudentsService:
             group_students: QuerySet of GroupStudent objects
             
         Returns:
-            List[dict]: List of student data in StudentVM format
+            List[dict]: List of student data in StudentVM format with group_student_id
         """
         student_view_models = []
 
@@ -403,7 +400,8 @@ class GroupStudentsService:
                 'birth_place': user.birth_place or '',
                 'gender': user.gender or '',
                 'employed': student.employed,
-                'user_id': str(user.id)
+                'user_id': str(user.id),
+                'group_student_id': group_student.id
             })
 
         return student_view_models
@@ -455,7 +453,6 @@ class GroupStudentsService:
             group_view_models.append({
                 'id': group.id,
                 'classroom': group.classroom,
-                'capacity': group.capacity,
                 'start_date': group.start_date,
                 'end_date': group.end_date,
                 'status': group.status,

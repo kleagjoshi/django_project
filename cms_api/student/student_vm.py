@@ -59,6 +59,21 @@ class StudentVM(serializers.Serializer):
     is_enabled = serializers.BooleanField(required=False)
 
 
+class StudentWithGroupVM(serializers.Serializer):
+    """Student ViewModel with Group Context - includes group_student_id"""
+    id = serializers.IntegerField()
+    person_id = serializers.CharField()
+    name = serializers.CharField()
+    surname = serializers.CharField()
+    father_name = serializers.CharField()
+    birthday = serializers.DateField()
+    birth_place = serializers.CharField()
+    gender = serializers.CharField()
+    employed = serializers.BooleanField()
+    user_id = serializers.CharField()
+    group_student_id = serializers.IntegerField()  # The GroupStudent relationship ID
+
+
 class StudentSimpleVM(serializers.Serializer):
     """Simple Student ViewModel for dropdowns"""
     id = serializers.IntegerField()

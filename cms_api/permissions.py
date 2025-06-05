@@ -222,4 +222,65 @@ class CanViewOwnData(BasePermission):
         except Student.DoesNotExist:
             pass
         
+        return False
+
+
+class CanManageMaterials(BasePermission):
+    """
+    Permission for material management:
+    - Only lecturers and admin can create, update, or delete materials
+    - All authenticated users can view materials (with proper filtering)
+    """
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        
+        # Admin users always have access
+        if request.user.is_staff:
+            return True
+        
+        # For read operations, allow authenticated users (filtering handled in views)
+        if request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return True
+        
+        # For write operations (create, update, delete), only lecturers allowed
+        try:
+            Lecturer.objects.get(user=request.user)
+            return True
+        except Lecturer.DoesNotExist:
+            return False
+
+    def has_object_permission(self, request, view, obj):
+        # Admin users always have access
+        if request.user.is_staff:
+            return True
+        
+        # For read operations, check if user can access this material
+        if request.method in ['GET', 'HEAD', 'OPTIONS']:
+            # Lecturers can view materials for their groups
+            try:
+                lecturer = Lecturer.objects.get(user=request.user)
+                if hasattr(obj, 'group') and hasattr(obj.group, 'course_lecturer'):
+                    return obj.group.course_lecturer.lecturer == lecturer
+            except Lecturer.DoesNotExist:
+                pass
+            
+            # Students can view materials for groups they're enrolled in
+            try:
+                student = Student.objects.get(user=request.user)
+                if hasattr(obj, 'group'):
+                    return obj.group.group_students.filter(student=student).exists()
+            except Student.DoesNotExist:
+                pass
+            
+            return False
+        
+        # For write operations, only lecturers who own the group can modify materials
+        try:
+            lecturer = Lecturer.objects.get(user=request.user)
+            if hasattr(obj, 'group') and hasattr(obj.group, 'course_lecturer'):
+                return obj.group.course_lecturer.lecturer == lecturer
+        except Lecturer.DoesNotExist:
+            pass
+        
         return False 

@@ -6,7 +6,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
 from cms_api.models import Material, Lecturer, Student
-from cms_api.permissions import IsOwnerLecturerOrAdmin, CanViewOwnData, IsLecturerOrAdmin
+from cms_api.permissions import CanManageMaterials
 from .material_service import MaterialsService
 from .material_vm import (
     MaterialVM, MaterialGetVM, MaterialCreateVM, MaterialUpdateVM
@@ -17,25 +17,7 @@ from cms_api.serializers import MaterialSerializer
 class MaterialViewSet(viewsets.ModelViewSet):
     queryset = Material.objects.all()
     serializer_class = MaterialSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_permissions(self):
-        """
-        Instantiates and returns the list of permissions that this view requires.
-        """
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            # Only lecturers can manage materials for their groups
-            permission_classes = [IsOwnerLecturerOrAdmin]
-        elif self.action in ['list', 'retrieve', 'by_group', 'by_week', 'search']:
-            # Students can view materials for their groups, lecturers for their groups
-            permission_classes = [CanViewOwnData]
-        elif self.action in ['statistics']:
-            # Only lecturers and admin can view statistics
-            permission_classes = [IsLecturerOrAdmin]
-        else:
-            permission_classes = [IsAuthenticated]
-        
-        return [permission() for permission in permission_classes]
+    permission_classes = [CanManageMaterials]
 
     def get_queryset(self):
         """
@@ -91,24 +73,21 @@ class MaterialViewSet(viewsets.ModelViewSet):
                 'link': request.data.get('link')
             }
 
-            success = MaterialsService.add_material(material_data, group_id)
-            if success:
+            result = MaterialsService.add_material(material_data, group_id)
+            if result['success']:
                 # Get the created material to return
-                materials = MaterialsService.get_all_materials_by_group_id(group_id)
-                created_material = None
-                for material in materials:
-                    if (material['topic'] == material_data['topic'] and
-                            material['week'] == material_data['week']):
-                        created_material = material
-                        break
-
-                if created_material:
-                    return Response(created_material, status=status.HTTP_201_CREATED)
-                else:
-                    return Response({'success': True}, status=status.HTTP_201_CREATED)
+                if 'material_id' in result:
+                    material_data = MaterialsService.get_material_by_id(result['material_id'])
+                    if material_data:
+                        return Response(material_data, status=status.HTTP_201_CREATED)
+                
+                return Response(
+                    {'success': True, 'message': result['message']},
+                    status=status.HTTP_201_CREATED
+                )
             else:
                 return Response(
-                    {'error': 'Group does not exist'},
+                    {'error': result['message']},
                     status=status.HTTP_400_BAD_REQUEST
                 )
         except Exception as e:
@@ -155,14 +134,19 @@ class MaterialViewSet(viewsets.ModelViewSet):
         Update material 
         """
         try:
-            success = MaterialsService.update_material_by_id(request.data, pk)
-            if success:
+            result = MaterialsService.update_material_by_id(request.data, pk)
+            if result['success']:
                 material_data = MaterialsService.get_material_by_id(pk)
-                return Response(material_data)
+                if material_data:
+                    return Response(material_data)
+                else:
+                    return Response(
+                        {'success': True, 'message': result['message']}
+                    )
             else:
                 return Response(
-                    {'error': 'Material not found or update failed'},
-                    status=status.HTTP_404_NOT_FOUND
+                    {'error': result['message']},
+                    status=status.HTTP_400_BAD_REQUEST
                 )
         except Exception as e:
             return Response(
@@ -178,13 +162,13 @@ class MaterialViewSet(viewsets.ModelViewSet):
         """
         Delete material 
         """
-        success = MaterialsService.delete_material_by_id(pk)
-        if success:
-            return Response({'success': True})
+        result = MaterialsService.delete_material_by_id(pk)
+        if result['success']:
+            return Response({'success': True, 'message': result['message']})
         else:
             return Response(
-                {'error': 'Material not found'},
-                status=status.HTTP_404_NOT_FOUND
+                {'error': result['message']},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
     @extend_schema(
@@ -291,13 +275,23 @@ class MaterialViewSet(viewsets.ModelViewSet):
             'average_materials_per_group': {'type': 'number'},
             'most_common_topics': {'type': 'array'}
         }}},
-        description="Get material statistics"
+        description="Get material statistics - Only accessible by lecturers and admin"
     )
     @action(detail=False, methods=['get'])
     def statistics(self, request):
         """
-        Get material statistics - additional functionality
+        Get material statistics - Only accessible by lecturers and admin
         """
+        # Check if user is lecturer or admin
+        if not request.user.is_staff:
+            try:
+                Lecturer.objects.get(user=request.user)
+            except Lecturer.DoesNotExist:
+                return Response(
+                    {'error': 'Only lecturers and administrators can access material statistics'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        
         try:
             all_materials = MaterialsService.get_all_materials()
 

@@ -22,7 +22,7 @@ class StudentCallViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         request=StudentCallCreateVM,
-        responses={201: {'type': 'object', 'properties': {'success': {'type': 'boolean'}}}},
+        responses={201: {'type': 'object', 'properties': {'success': {'type': 'boolean'}, 'message': {'type': 'string'}}}},
         description="Add a student call connection"
     )
     def create(self, request):
@@ -39,12 +39,12 @@ class StudentCallViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            success = StudentCallsService.add_student_call(student_id, call_id)
-            if success:
-                return Response({'success': True}, status=status.HTTP_201_CREATED)
+            result = StudentCallsService.add_student_call(student_id, call_id)
+            if result['success']:
+                return Response(result, status=status.HTTP_201_CREATED)
             else:
                 return Response(
-                    {'error': 'Failed to create student call relationship'},
+                    {'error': result['message']},
                     status=status.HTTP_400_BAD_REQUEST
                 )
         except Exception as e:
@@ -66,7 +66,7 @@ class StudentCallViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         request=StudentCallDeleteVM,
-        responses={200: {'type': 'object', 'properties': {'success': {'type': 'boolean'}}}},
+        responses={200: {'type': 'object', 'properties': {'success': {'type': 'boolean'}, 'message': {'type': 'string'}}}},
         description="Delete a student call connection - equivalent to C# DeleteStudentCall method"
     )
     @action(detail=False, methods=['post'])
@@ -84,12 +84,12 @@ class StudentCallViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            success = StudentCallsService.delete_student_call(student_id, call_id)
-            if success:
-                return Response({'success': True})
+            result = StudentCallsService.delete_student_call(student_id, call_id)
+            if result['success']:
+                return Response(result)
             else:
                 return Response(
-                    {'error': 'Student call relationship not found'},
+                    {'error': result['message']},
                     status=status.HTTP_404_NOT_FOUND
                 )
         except Exception as e:
@@ -171,12 +171,12 @@ class StudentCallViewSet(viewsets.ModelViewSet):
             'created_count': {'type': 'integer'},
             'message': {'type': 'string'}
         }}},
-        description="Add multiple students to a call - bulk operation"
+        description="Add multiple students to a call - bulk operation with capacity validation"
     )
     @action(detail=False, methods=['post'])
     def bulk_add_students(self, request):
         """
-        Add multiple students to a call - enhanced functionality
+        Add multiple students to a call - enhanced functionality with capacity checking
         """
         try:
             call_id = request.data.get('call_id')
@@ -193,7 +193,10 @@ class StudentCallViewSet(viewsets.ModelViewSet):
             if result['success']:
                 return Response(result)
             else:
-                return Response(result, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {'error': result['message'], 'created_count': result.get('created_count', 0)},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
         except Exception as e:
             return Response(

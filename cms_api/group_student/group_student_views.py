@@ -12,7 +12,7 @@ from .group_student_vm import (
     GroupStudentsRequestVM, GroupStudentStatusUpdateVM, GroupStudentBulkCreateVM,
     GroupStudentBulkRemoveVM, GroupStudentVM
 )
-from ..student.student_vm import StudentVM
+from ..student.student_vm import StudentVM, StudentWithGroupVM
 from cms_api.serializers import GroupStudentSerializer
 
 
@@ -22,8 +22,8 @@ class GroupStudentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
-        responses={200: StudentVM(many=True)},
-        description="Get all students by group ID",
+        responses={200: StudentWithGroupVM(many=True)},
+        description="Get all students by group ID - includes group_student_id for each student",
         parameters=[
             OpenApiParameter(
                 name='group_id',
@@ -36,7 +36,7 @@ class GroupStudentViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def students_by_group(self, request):
         """
-        Get all students by group ID
+        Get all students by group ID - includes group_student_id
         """
         group_id = request.query_params.get('group_id')
         if not group_id:

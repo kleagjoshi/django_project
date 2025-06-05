@@ -1,6 +1,7 @@
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from cms_api.models import Material, Group
+from cms_api.enums import GroupStatus
 from .material_vm import (
     MaterialVM, MaterialGetVM, MaterialCreateVM, MaterialUpdateVM
 )
@@ -17,7 +18,7 @@ class MaterialsService:
             group_id: The group ID to add the material to
 
         Returns:
-            bool: True if successful, False if group doesn't exist
+            dict: Result with success status and message
         """
         # Create combined data for validation
         combined_data = {**material_data, 'group_id': group_id}
@@ -27,9 +28,19 @@ class MaterialsService:
         serializer.is_valid(raise_exception=True)
         validated_data = serializer.validated_data
 
-        # Check if the group exists
-        if not Group.objects.filter(id=group_id).exists():
-            return False
+        # Check if the group exists and get its status
+        try:
+            group = Group.objects.get(id=group_id)
+        except Group.DoesNotExist:
+            return {
+                'success': False,
+                'message': 'Group not found'
+            }
+
+        # Check if group status allows material modifications
+        status_check = MaterialsService._check_group_status_for_material_modification(group)
+        if not status_check['allowed']:
+            return status_check
 
         try:
             # Create the material
@@ -40,10 +51,17 @@ class MaterialsService:
                 link=validated_data['link'],
                 group_id=group_id
             )
-            return True
+            return {
+                'success': True,
+                'message': 'Material successfully added to group',
+                'material_id': material.id
+            }
 
-        except Exception:
-            return False
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Failed to add material: {str(e)}'
+            }
 
     @staticmethod
     def update_material_by_id(material_data, material_id):
@@ -55,7 +73,7 @@ class MaterialsService:
             material_id: The material ID to update
 
         Returns:
-            bool: True if successful, False otherwise
+            dict: Result with success status and message
         """
         # Validate input data
         serializer = MaterialUpdateVM(data=material_data)
@@ -63,16 +81,35 @@ class MaterialsService:
         validated_data = serializer.validated_data
 
         try:
-            material = Material.objects.get(id=material_id)
+            material = Material.objects.select_related('group').get(id=material_id)
+        except Material.DoesNotExist:
+            return {
+                'success': False,
+                'message': 'Material not found'
+            }
+
+        # Check if group status allows material modifications
+        status_check = MaterialsService._check_group_status_for_material_modification(material.group)
+        if not status_check['allowed']:
+            return status_check
+
+        try:
             material.topic = validated_data['topic']
             material.description = validated_data['description']
             material.week = validated_data['week']
             material.link = validated_data['link']
             material.save()
-            return True
+            
+            return {
+                'success': True,
+                'message': 'Material successfully updated'
+            }
 
-        except Material.DoesNotExist:
-            return False
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Failed to update material: {str(e)}'
+            }
 
     @staticmethod
     def get_all_materials():
@@ -127,15 +164,57 @@ class MaterialsService:
             material_id: The material ID to delete
 
         Returns:
-            bool: True if successful, False if material not found
+            dict: Result with success status and message
         """
         try:
-            material = Material.objects.get(id=material_id)
-            material.delete()
-            return True
-
+            material = Material.objects.select_related('group').get(id=material_id)
         except Material.DoesNotExist:
-            return False
+            return {
+                'success': False,
+                'message': 'Material not found'
+            }
+
+        # Check if group status allows material modifications
+        status_check = MaterialsService._check_group_status_for_material_modification(material.group)
+        if not status_check['allowed']:
+            return status_check
+
+        try:
+            material.delete()
+            return {
+                'success': True,
+                'message': 'Material successfully deleted'
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Failed to delete material: {str(e)}'
+            }
+
+    @staticmethod
+    def _check_group_status_for_material_modification(group):
+        """
+        Helper method to check if group status allows material modifications
+
+        Args:
+            group: Group object
+
+        Returns:
+            dict: Result with allowed status and message
+        """
+        if group.status != GroupStatus.ONGOING:
+            status_name = dict(GroupStatus.choices).get(group.status, 'Unknown')
+            return {
+                'success': False,
+                'allowed': False,
+                'message': f'Cannot modify materials for groups with status "{status_name}". Materials can only be added or edited for ongoing groups.'
+            }
+        
+        return {
+            'success': True,
+            'allowed': True,
+            'message': 'Group status allows material modifications'
+        }
 
     @staticmethod
     def _build_material_view_models(materials):

@@ -18,18 +18,41 @@ class StudentCallsService:
             call_id: The call ID
 
         Returns:
-            bool: True if successful, False otherwise
+            dict: Result with success status and message
         """
-        # Validate input data
-        student_call_data = {'student_id': student_id, 'call_id': call_id}
-        serializer = StudentCallCreateVM(data=student_call_data)
-        serializer.is_valid(raise_exception=True)
-
         try:
             with transaction.atomic():
-                # Get student and call objects
-                student = Student.objects.get(id=student_id)
-                call = Call.objects.get(id=call_id)
+                # Basic existence validation
+                try:
+                    student = Student.objects.get(id=student_id)
+                except Student.DoesNotExist:
+                    return {
+                        'success': False,
+                        'message': 'Student not found'
+                    }
+                
+                try:
+                    call = Call.objects.get(id=call_id)
+                except Call.DoesNotExist:
+                    return {
+                        'success': False,
+                        'message': 'Call not found'
+                    }
+
+                # Check if student is already registered for this call
+                if StudentCall.objects.filter(student_id=student_id, call_id=call_id).exists():
+                    return {
+                        'success': False,
+                        'message': 'Student is already registered for this call'
+                    }
+
+                # Check if call has capacity
+                current_students = StudentCall.objects.filter(call_id=call_id).count()
+                if current_students >= call.capacity:
+                    return {
+                        'success': False,
+                        'message': f'Call has reached its maximum capacity of {call.capacity} students'
+                    }
 
                 # Create the student call relationship
                 student_call = StudentCall.objects.create(
@@ -37,12 +60,16 @@ class StudentCallsService:
                     call=call
                 )
 
-                return True
+                return {
+                    'success': True,
+                    'message': 'Student successfully added to call'
+                }
 
-        except (Student.DoesNotExist, Call.DoesNotExist):
-            return False
-        except Exception:
-            return False
+        except Exception as e:
+            return {
+                'success': False,
+                'message': f'Failed to add student to call: {str(e)}'
+            }
 
     @staticmethod
     def delete_student_call(student_id, call_id):
@@ -54,23 +81,24 @@ class StudentCallsService:
             call_id: The call ID
 
         Returns:
-            bool: True if successful, False otherwise
+            dict: Result with success status and message
         """
-        # Validate input data
-        student_call_data = {'student_id': student_id, 'call_id': call_id}
-        serializer = StudentCallDeleteVM(data=student_call_data)
-        serializer.is_valid(raise_exception=True)
-
         try:
             student_call = StudentCall.objects.get(
                 student_id=student_id,
                 call_id=call_id
             )
             student_call.delete()
-            return True
+            return {
+                'success': True,
+                'message': 'Student successfully removed from call'
+            }
 
         except StudentCall.DoesNotExist:
-            return False
+            return {
+                'success': False,
+                'message': 'Student call relationship not found'
+            }
 
     @staticmethod
     def get_all_students_by_call_id(call_id):
@@ -140,21 +168,64 @@ class StudentCallsService:
         try:
             with transaction.atomic():
                 call = Call.objects.get(id=call_id)
-                students = Student.objects.filter(id__in=student_ids)
+                
+                # Check current capacity
+                current_students = StudentCall.objects.filter(call_id=call_id).count()
+                available_spots = call.capacity - current_students
+                
+                if available_spots <= 0:
+                    return {
+                        'success': False,
+                        'created_count': 0,
+                        'message': f'Call has reached its maximum capacity of {call.capacity} students'
+                    }
+                
+                # Get valid students (exist and not already registered)
+                existing_student_calls = StudentCall.objects.filter(
+                    call_id=call_id,
+                    student_id__in=student_ids
+                ).values_list('student_id', flat=True)
+                
+                valid_student_ids = [sid for sid in student_ids if sid not in existing_student_calls]
+                students = Student.objects.filter(id__in=valid_student_ids)
+                
+                # Limit to available spots
+                students_to_add = list(students)[:available_spots]
+                
+                if not students_to_add:
+                    return {
+                        'success': False,
+                        'created_count': 0,
+                        'message': 'No valid students to add (either already registered or not found)'
+                    }
 
                 student_calls = []
-                for student in students:
+                for student in students_to_add:
                     student_calls.append(StudentCall(student=student, call=call))
 
                 # Bulk create the relationships
                 StudentCall.objects.bulk_create(student_calls)
+                
+                message = f'Successfully added {len(student_calls)} students to call'
+                if len(students_to_add) < len(student_ids):
+                    skipped_count = len(student_ids) - len(students_to_add)
+                    if available_spots < len(valid_student_ids):
+                        message += f' (limited by capacity, {skipped_count} students not added)'
+                    else:
+                        message += f' ({skipped_count} students were already registered or not found)'
 
                 return {
                     'success': True,
                     'created_count': len(student_calls),
-                    'message': f'Successfully added {len(student_calls)} students to call'
+                    'message': message
                 }
 
+        except Call.DoesNotExist:
+            return {
+                'success': False,
+                'created_count': 0,
+                'message': 'Call not found'
+            }
         except Exception as e:
             return {
                 'success': False,
@@ -358,3 +429,34 @@ class StudentCallsService:
             })
 
         return call_view_models
+
+    @staticmethod
+    def _check_call_capacity(call_id, required_spots=1):
+        """
+        Helper method to check call capacity
+
+        Args:
+            call_id: The call ID
+            required_spots: Number of spots required (default 1)
+
+        Returns:
+            dict: Capacity check result with available_spots and is_available
+        """
+        try:
+            call = Call.objects.get(id=call_id)
+            current_students = StudentCall.objects.filter(call_id=call_id).count()
+            available_spots = call.capacity - current_students
+            
+            return {
+                'available_spots': available_spots,
+                'is_available': available_spots >= required_spots,
+                'capacity': call.capacity,
+                'current_students': current_students
+            }
+        except Call.DoesNotExist:
+            return {
+                'available_spots': 0,
+                'is_available': False,
+                'capacity': 0,
+                'current_students': 0
+            }
